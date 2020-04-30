@@ -141,52 +141,43 @@ class SgLatestPublishModel(ShotgunModel):
                 # standard mode - show folders and items for the currently selected item
                 # for leaf nodes and for tree nodes which are connected to an entity,
                 # show matches.
+                sg_filters = []
 
-                # Extract the Shotgun data and field value from the node item.
-                (sg_data, field_value) = model_item_data.get_item_data(item)
-
-                if sg_data:
-                    # leaf node!
-                    # show the items associated. Handle tasks
-                    # via the task field instead of the entity field
-                    if sg_data.get("type") == "Task":
-                        sg_filters = [
-                            [
-                                "task",
-                                "is",
-                                {"type": sg_data["type"], "id": sg_data["id"]},
-                            ]
-                        ]
-                    elif sg_data.get("type") == "Version":
-                        sg_filters = [
-                            ["version", "is", {"type": "Version", "id": sg_data["id"]}]
-                        ]
-                    else:
-                        sg_filters = [
-                            [
-                                "entity",
-                                "is",
-                                {"type": sg_data["type"], "id": sg_data["id"]},
-                            ]
-                        ]
-
-                else:
-                    # intermediate node.
-
-                    if (
+                while item:
+                    # Extract the Shotgun data and field value from the node item.
+                    sg_data, field_value = model_item_data.get_item_data(item)
+                    item = item.parent()  # Go up hierarchy for more filters
+                    is_intermediate = (
                         isinstance(field_value, dict)
                         and "name" in field_value
                         and "type" in field_value
-                    ):
+                    )
+
+                    if sg_data:
+                        # leaf node!
+                        # show the items associated. Handle tasks
+                        # via the task field instead of the entity field
+                        item_type = sg_data["type"]
+                        value = {"type": item_type, "id": sg_data["id"]}
+                    elif is_intermediate:
                         # this is an intermediate node like a sequence or an asset which
                         # can have publishes of its own associated
-                        sg_filters = [["entity", "is", field_value]]
-
+                        item_type = field_value["type"]
+                        value = field_value
                     else:
                         # this is an intermediate node like status or asset type which does not
                         # have any publishes of its own, because the value (e.g. the status or the asset type)
                         # is nothing that you could link up a publish to.
-                        sg_filters = None
+                        continue
+
+                    if item_type == "Task":
+                        sg_filters.append(["task", "is", value])
+                    elif item_type == "Version":
+                        sg_filters.append(["version", "is", value])
+                    elif item_type == "Step":
+                        sg_filters.append(["task.Task.step", "is", value])
+                    elif item_type in ["Asset", "Shot"]:
+                        sg_filters.append(["entity", "is", value])
 
         # now if sg_filters is not None (None indicates that no data should be fetched by the model),
         # add our external filter settings
@@ -206,7 +197,7 @@ class SgLatestPublishModel(ShotgunModel):
 
         # now that we have establishes the sg filters and which
         # folders to load, set up the actual model
-        self._do_load_data(sg_filters, child_folders)
+        self._do_load_data(sg_filters or None, child_folders)
 
     def async_refresh(self):
         """
